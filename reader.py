@@ -36,7 +36,7 @@ class Reader():
           serialized_example,
           features={
             ec.FEATKEY_NR_IMAGES: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-            'image/encoded_image': tf.io.FixedLenFeature(dtype=tf.string, shape=[]),
+            ec.FEATKEY_IMAGE: tf.io.FixedLenFeature(dtype=tf.string, shape=[]),
             ec.FEATKEY_IMAGE_HEIGHT: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
             ec.FEATKEY_IMAGE_WIDTH: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
             # NOTE: For some reason, "allow_missing" has to be set to True, otherwise there's an exception
@@ -63,7 +63,7 @@ class Reader():
             ec.FEATKEY_STUDY_INSTANCE_UID: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
             ec.LABELKEY_ANNOTATION_ID: tf.io.FixedLenFeature(shape=[], dtype=tf.int64),
             ec.LABELKEY_ANNOTATOR_MAIL: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
-            'image/file_name': tf.io.FixedLenSequenceFeature(shape=[], dtype=tf.string, allow_missing=True),
+            ec.FEATKEY_SOP_INSTANCE_UID: tf.io.FixedLenSequenceFeature(shape=[], dtype=tf.string, allow_missing=True),
             ec.FEATKEY_PATIENT_ID: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
             ec.FEATKEY_MANUFACTURER: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
             ec.FEATKEY_LATERALITY: tf.io.FixedLenSequenceFeature(shape=[], dtype=tf.string, allow_missing=True),
@@ -72,7 +72,7 @@ class Reader():
             ec.LABELKEY_INTERVAL_TYPE: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
           })
 
-      image_buffer = features['image/encoded_image']
+      image_buffer = features[ec.FEATKEY_IMAGE]
       image = tf.image.decode_jpeg(image_buffer, channels=1)
       image = self._preprocess(image)
       images = tf.train.shuffle_batch(
