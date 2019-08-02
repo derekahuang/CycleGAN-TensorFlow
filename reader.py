@@ -1,8 +1,10 @@
 import tensorflow as tf
+import numpy as np
+import constants as ec
 import utils
 
 class Reader():
-  def __init__(self, tfrecords_file, image_size=256,
+  def __init__(self, tfrecords_file, image_width=1152, image_height=960,
     min_queue_examples=1000, batch_size=1, num_threads=8, name=''):
     """
     Args:
@@ -12,7 +14,8 @@ class Reader():
       num_threads: integer, number of preprocess threads
     """
     self.tfrecords_file = tfrecords_file
-    self.image_size = image_size
+    self.image_width = image_width
+    self.image_height = image_height
     self.min_queue_examples = min_queue_examples
     self.batch_size = batch_size
     self.num_threads = num_threads
@@ -32,8 +35,41 @@ class Reader():
       features = tf.parse_single_example(
           serialized_example,
           features={
-            'image/file_name': tf.FixedLenFeature([], tf.string),
-            'image/encoded_image': tf.FixedLenFeature([], tf.string),
+            ec.FEATKEY_NR_IMAGES: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+            'image/encoded_image': tf.io.FixedLenFeature(dtype=tf.string, shape=[]),
+            ec.FEATKEY_IMAGE_HEIGHT: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+            ec.FEATKEY_IMAGE_WIDTH: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+            # NOTE: For some reason, "allow_missing" has to be set to True, otherwise there's an exception
+            #       "allow_missing must be set to True". This has no relevance for us, our values are never missing.
+            ec.FEATKEY_ORIGINAL_HEIGHT: tf.io.FixedLenSequenceFeature(dtype=tf.int64, shape=[], allow_missing=True),
+            ec.FEATKEY_ORIGINAL_WIDTH: tf.io.FixedLenSequenceFeature(dtype=tf.int64, shape=[], allow_missing=True),
+            ec.LABELKEY_GT_ROIS_WITH_FINDING_CODES: tf.io.FixedLenSequenceFeature(
+                dtype=tf.int64, shape=[100, 5], allow_missing=True
+            ),
+            ec.LABELKEY_GT_ANNOTATION_CONFIDENCES: tf.io.FixedLenSequenceFeature(
+                dtype=tf.int64, shape=[100], allow_missing=True
+            ),
+            ec.LABELKEY_GT_BIOPSY_PROVEN: tf.io.FixedLenSequenceFeature(
+                dtype=np.int64, shape=[100], allow_missing=True
+            ),
+            ec.LABELKEY_GT_BIRADS_SCORE: tf.io.FixedLenSequenceFeature(
+                dtype=np.int64, shape=[100], allow_missing=True
+            ),
+            ec.FEATKEY_ANNOTATION_STATUS: tf.io.FixedLenFeature(dtype=tf.string, shape=[]),
+            ec.LABELKEY_WAS_REFERRED: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+            ec.LABELKEY_WAS_REFERRED_IN_FOLLOWUP: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+            ec.LABELKEY_BIOPSY_SCORE: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+            ec.LABELKEY_BIOPSY_SCORE_OF_FOLLOWUP: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+            ec.FEATKEY_STUDY_INSTANCE_UID: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
+            ec.LABELKEY_ANNOTATION_ID: tf.io.FixedLenFeature(shape=[], dtype=tf.int64),
+            ec.LABELKEY_ANNOTATOR_MAIL: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
+            'image/file_name': tf.io.FixedLenSequenceFeature(shape=[], dtype=tf.string, allow_missing=True),
+            ec.FEATKEY_PATIENT_ID: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
+            ec.FEATKEY_MANUFACTURER: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
+            ec.FEATKEY_LATERALITY: tf.io.FixedLenSequenceFeature(shape=[], dtype=tf.string, allow_missing=True),
+            ec.FEATKEY_VIEW: tf.io.FixedLenSequenceFeature(shape=[], dtype=tf.string, allow_missing=True),
+            ec.LABELKEY_DENSITY: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+            ec.LABELKEY_INTERVAL_TYPE: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
           })
 
       image_buffer = features['image/encoded_image']
@@ -49,9 +85,9 @@ class Reader():
     return images
 
   def _preprocess(self, image):
-    image = tf.image.resize_images(image, size=(self.image_size, self.image_size))
+    image = tf.image.resize_images(image, size=(self.image_width, self.image_height))
     image = utils.convert2float(image)
-    image.set_shape([self.image_size, self.image_size, 3])
+    image.set_shape([self.image_width, self.image_height, 3])
     return image
 
 def test_reader():

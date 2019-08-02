@@ -9,7 +9,8 @@ from utils import ImagePool
 FLAGS = tf.flags.FLAGS
 
 tf.flags.DEFINE_integer('batch_size', 1, 'batch size, default: 1')
-tf.flags.DEFINE_integer('image_size', 256, 'image size, default: 256')
+tf.flags.DEFINE_integer('image_width', 1152, 'image with, default: 1152')
+tf.flags.DEFINE_integer('image_height', 960, 'image height, default: 960')
 tf.flags.DEFINE_bool('use_lsgan', True,
                      'use lsgan (mean squared error) or cross entropy loss, default: True')
 tf.flags.DEFINE_string('norm', 'instance',
@@ -27,6 +28,10 @@ tf.flags.DEFINE_float('pool_size', 50,
 tf.flags.DEFINE_integer('ngf', 64,
                         'number of gen filters in first conv layer, default: 64')
 
+# tf.flags.DEFINE_string('X', 'gs://mx-healthcare-derived/preprocessed/experimental/derek/IV_siemens/all/*.tfrecord.gz',
+#                        'X tfrecords file for training, default: data/tfrecords/apple.tfrecords')
+# tf.flags.DEFINE_string('Y', 'gs://mx-healthcare-derived/preprocessed/experimental/derek/IV_hologic/all/*.tfrecord.gz',
+#                        'Y tfrecords file for training, default: data/tfrecords/orange.tfrecords')
 tf.flags.DEFINE_string('X', 'data/tfrecords/apple.tfrecords',
                        'X tfrecords file for training, default: data/tfrecords/apple.tfrecords')
 tf.flags.DEFINE_string('Y', 'data/tfrecords/orange.tfrecords',
@@ -52,7 +57,8 @@ def train():
         X_train_file=FLAGS.X,
         Y_train_file=FLAGS.Y,
         batch_size=FLAGS.batch_size,
-        image_size=FLAGS.image_size,
+        image_width=FLAGS.image_width,
+        image_height=FLAGS.image_height,
         use_lsgan=FLAGS.use_lsgan,
         norm=FLAGS.norm,
         lambda1=FLAGS.lambda1,
