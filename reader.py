@@ -73,7 +73,7 @@ class Reader():
           })
 
       image_buffer = features['image/encoded_image']
-      image = tf.image.decode_jpeg(image_buffer, channels=3)
+      image = tf.image.decode_jpeg(image_buffer, channels=1)
       image = self._preprocess(image)
       images = tf.train.shuffle_batch(
             [image], batch_size=self.batch_size, num_threads=self.num_threads,
@@ -87,7 +87,7 @@ class Reader():
   def _preprocess(self, image):
     image = tf.image.resize_images(image, size=(self.image_width, self.image_height))
     image = utils.convert2float(image)
-    image.set_shape([self.image_width, self.image_height, 3])
+    image.set_shape([self.image_width, self.image_height, 1])
     return image
 
 def test_reader():

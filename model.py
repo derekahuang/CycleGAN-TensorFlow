@@ -58,9 +58,9 @@ class CycleGAN:
         self.is_training, norm=norm, use_sigmoid=use_sigmoid)
 
     self.fake_x = tf.placeholder(tf.float32,
-        shape=[batch_size, image_width, image_height, 3])
+        shape=[batch_size, image_width, image_height, 1])
     self.fake_y = tf.placeholder(tf.float32,
-        shape=[batch_size, image_width, image_height, 3])
+        shape=[batch_size, image_width, image_height, 1])
 
   def model(self):
     X_reader = Reader(self.X_train_file, name='X',
