@@ -1,6 +1,25 @@
+from __future__ import absolute_import, division, unicode_literals
+
+from future.builtins import object
+import multiprocessing as mp
+import hashlib
+import subprocess
+
 import tensorflow as tf
+
+from common import mparams, run_train
+from common.evaluation import Evaluator
+from common.train import inputs
+from common.train.checkpoints.evaluation_listener import (
+    EvaluationListener,
+    METRIC_PREFIX_EVAL_TRAIN,
+    METRIC_PREFIX_EVAL_VALIDATION,
+)
+from common.train.preload import preload_custom_weights
+from common.util import file_util, mx_logging
 import numpy as np
 import constants as ec
+
 import utils
 
 class Reader():
@@ -28,62 +47,80 @@ class Reader():
       images: 4D tensor [batch_size, image_width, image_height, image_depth]
     """
     with tf.name_scope(self.name):
-      filename_queue = tf.train.string_input_producer([self.tfrecords_file])
-      reader = tf.TFRecordReader()
+      tfrecord_paths = self.tfrecords_file
 
-      _, serialized_example = self.reader.read(filename_queue)
-      features = tf.parse_single_example(
-          serialized_example,
-          features={
-            ec.FEATKEY_NR_IMAGES: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-            ec.FEATKEY_IMAGE: tf.io.FixedLenFeature(dtype=tf.string, shape=[]),
-            ec.FEATKEY_IMAGE_HEIGHT: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-            ec.FEATKEY_IMAGE_WIDTH: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-            # NOTE: For some reason, "allow_missing" has to be set to True, otherwise there's an exception
-            #       "allow_missing must be set to True". This has no relevance for us, our values are never missing.
-            ec.FEATKEY_ORIGINAL_HEIGHT: tf.io.FixedLenSequenceFeature(dtype=tf.int64, shape=[], allow_missing=True),
-            ec.FEATKEY_ORIGINAL_WIDTH: tf.io.FixedLenSequenceFeature(dtype=tf.int64, shape=[], allow_missing=True),
-            ec.LABELKEY_GT_ROIS_WITH_FINDING_CODES: tf.io.FixedLenSequenceFeature(
-                dtype=tf.int64, shape=[100, 5], allow_missing=True
-            ),
-            ec.LABELKEY_GT_ANNOTATION_CONFIDENCES: tf.io.FixedLenSequenceFeature(
-                dtype=tf.int64, shape=[100], allow_missing=True
-            ),
-            ec.LABELKEY_GT_BIOPSY_PROVEN: tf.io.FixedLenSequenceFeature(
-                dtype=np.int64, shape=[100], allow_missing=True
-            ),
-            ec.LABELKEY_GT_BIRADS_SCORE: tf.io.FixedLenSequenceFeature(
-                dtype=np.int64, shape=[100], allow_missing=True
-            ),
-            ec.FEATKEY_ANNOTATION_STATUS: tf.io.FixedLenFeature(dtype=tf.string, shape=[]),
-            ec.LABELKEY_WAS_REFERRED: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-            ec.LABELKEY_WAS_REFERRED_IN_FOLLOWUP: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-            ec.LABELKEY_BIOPSY_SCORE: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-            ec.LABELKEY_BIOPSY_SCORE_OF_FOLLOWUP: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-            ec.FEATKEY_STUDY_INSTANCE_UID: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
-            ec.LABELKEY_ANNOTATION_ID: tf.io.FixedLenFeature(shape=[], dtype=tf.int64),
-            ec.LABELKEY_ANNOTATOR_MAIL: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
-            ec.FEATKEY_SOP_INSTANCE_UID: tf.io.FixedLenSequenceFeature(shape=[], dtype=tf.string, allow_missing=True),
-            ec.FEATKEY_PATIENT_ID: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
-            ec.FEATKEY_MANUFACTURER: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
-            ec.FEATKEY_LATERALITY: tf.io.FixedLenSequenceFeature(shape=[], dtype=tf.string, allow_missing=True),
-            ec.FEATKEY_VIEW: tf.io.FixedLenSequenceFeature(shape=[], dtype=tf.string, allow_missing=True),
-            ec.LABELKEY_DENSITY: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-            ec.LABELKEY_INTERVAL_TYPE: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-          })
+      mx_logging.info("Constructing train input fn for [{}, ...]".format(tfrecord_paths[0]))
 
-      image_buffer = features[ec.FEATKEY_IMAGE]
-      image = tf.reshape(tf.decode_raw(image_buffer, tf.uint16), shape=(self.image_width, self.image_height))
-      image = tf.tile(tf.expand_dims(image, -1), [1, 1, 3])
-      image = self._preprocess(image)
-      images = tf.train.shuffle_batch(
-            [image], batch_size=self.batch_size, num_threads=self.num_threads,
-            capacity=self.min_queue_examples + 3*self.batch_size,
-            min_after_dequeue=self.min_queue_examples
-          )
+      input_fn = inputs.input_fn_factory(
+        tfrecord_paths,
+        self.experiment.features_schema,
+        self.batch_size,
+        model_preprocessors=self.experiment.model_preprocessor_training_config.train
+                            + [inputs.ShuffleModelPreprocessor(PARAMS.shuffle_buffer_size)],
+        num_epochs=None,
+        num_parallel_reads=mp.cpu_count(),
+        num_parallel_calls=mp.cpu_count(),
+      )
 
-      tf.summary.image('_input', images)
-    return images
+      features, labels = input_fn()
+
+    return features, labels
+    #   filename_queue = tf.train.string_input_producer([self.tfrecords_file])
+    #   reader = tf.TFRecordReader()
+    #
+    #   _, serialized_example = self.reader.read(filename_queue)
+    #   features = tf.parse_single_example(
+    #       serialized_example,
+    #       features={
+    #         ec.FEATKEY_NR_IMAGES: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+    #         ec.FEATKEY_IMAGE: tf.io.FixedLenFeature(dtype=tf.string, shape=[]),
+    #         ec.FEATKEY_IMAGE_HEIGHT: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+    #         ec.FEATKEY_IMAGE_WIDTH: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+    #         # NOTE: For some reason, "allow_missing" has to be set to True, otherwise there's an exception
+    #         #       "allow_missing must be set to True". This has no relevance for us, our values are never missing.
+    #         ec.FEATKEY_ORIGINAL_HEIGHT: tf.io.FixedLenSequenceFeature(dtype=tf.int64, shape=[], allow_missing=True),
+    #         ec.FEATKEY_ORIGINAL_WIDTH: tf.io.FixedLenSequenceFeature(dtype=tf.int64, shape=[], allow_missing=True),
+    #         ec.LABELKEY_GT_ROIS_WITH_FINDING_CODES: tf.io.FixedLenSequenceFeature(
+    #             dtype=tf.int64, shape=[100, 5], allow_missing=True
+    #         ),
+    #         ec.LABELKEY_GT_ANNOTATION_CONFIDENCES: tf.io.FixedLenSequenceFeature(
+    #             dtype=tf.int64, shape=[100], allow_missing=True
+    #         ),
+    #         ec.LABELKEY_GT_BIOPSY_PROVEN: tf.io.FixedLenSequenceFeature(
+    #             dtype=np.int64, shape=[100], allow_missing=True
+    #         ),
+    #         ec.LABELKEY_GT_BIRADS_SCORE: tf.io.FixedLenSequenceFeature(
+    #             dtype=np.int64, shape=[100], allow_missing=True
+    #         ),
+    #         ec.FEATKEY_ANNOTATION_STATUS: tf.io.FixedLenFeature(dtype=tf.string, shape=[]),
+    #         ec.LABELKEY_WAS_REFERRED: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+    #         ec.LABELKEY_WAS_REFERRED_IN_FOLLOWUP: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+    #         ec.LABELKEY_BIOPSY_SCORE: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+    #         ec.LABELKEY_BIOPSY_SCORE_OF_FOLLOWUP: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+    #         ec.FEATKEY_STUDY_INSTANCE_UID: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
+    #         ec.LABELKEY_ANNOTATION_ID: tf.io.FixedLenFeature(shape=[], dtype=tf.int64),
+    #         ec.LABELKEY_ANNOTATOR_MAIL: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
+    #         ec.FEATKEY_SOP_INSTANCE_UID: tf.io.FixedLenSequenceFeature(shape=[], dtype=tf.string, allow_missing=True),
+    #         ec.FEATKEY_PATIENT_ID: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
+    #         ec.FEATKEY_MANUFACTURER: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
+    #         ec.FEATKEY_LATERALITY: tf.io.FixedLenSequenceFeature(shape=[], dtype=tf.string, allow_missing=True),
+    #         ec.FEATKEY_VIEW: tf.io.FixedLenSequenceFeature(shape=[], dtype=tf.string, allow_missing=True),
+    #         ec.LABELKEY_DENSITY: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+    #         ec.LABELKEY_INTERVAL_TYPE: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
+    #       })
+    #
+    #   image_buffer = features[ec.FEATKEY_IMAGE]
+    #   image = tf.reshape(tf.decode_raw(image_buffer, tf.uint16), shape=(self.image_width, self.image_height))
+    #   image = tf.tile(tf.expand_dims(image, -1), [1, 1, 3])
+    #   image = self._preprocess(image)
+    #   images = tf.train.shuffle_batch(
+    #         [image], batch_size=self.batch_size, num_threads=self.num_threads,
+    #         capacity=self.min_queue_examples + 3*self.batch_size,
+    #         min_after_dequeue=self.min_queue_examples
+    #       )
+    #
+    #   tf.summary.image('_input', images)
+    # return images
 
   def _preprocess(self, image):
     image = tf.image.resize_images(image, size=(self.image_width, self.image_height))
