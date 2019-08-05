@@ -73,7 +73,7 @@ class Reader():
           })
 
       image_buffer = features[ec.FEATKEY_IMAGE]
-      image = tf.reshape(tf.decode_raw(image_buffer, dtype=tf.uint16), shape=(self.image_width, self.image_height))
+      image = tf.reshape(tf.decode_raw(image_buffer, tf.uint16), shape=(self.image_width, self.image_height))
       image = tf.tile(tf.expand_dims(image, -1), [1, 1, 3])
       image = self._preprocess(image)
       images = tf.train.shuffle_batch(
