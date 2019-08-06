@@ -8,9 +8,15 @@ from common.train import inputs
 from common.util import file_util, mx_logging
 import numpy as np
 import projects.edison.constants as ec
+import random
+import sys
 from projects.edison.train.model_preprocessors.exam_image_splitting import ExamToImagesSplitterModelPreprocessor
+from projects.edison.util.notebook_util import get_feature_dicts
 # import utils.py
-
+from projects.edison.train import util
+from six import iteritems
+_cached_converter = None
+_cached_output_dim = None
 
 class Reader():
     def __init__(self, tfrecords_file, image_width=1152, image_height=960,
@@ -32,73 +38,91 @@ class Reader():
         self.output_dim = (image_width, image_height)
         self.name = name
 
+    def convert2float(self, image):
+        """ Transfrom from int image ([0,255]) to float tensor ([-1.,1.])
+        """
+        image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+        image = (image / 127.5) - 1.0
+        image = tf.tile(tf.expand_dims(image, -1), [1, 1, 3])
+
+        # image.set_shape([self.image_width, self.image_height, 3])
+        return image
+
+    def _get_input_fn(self, path_globs, from_exam_converter):
+        global _cached_converter, _cached_output_dim
+        if _cached_converter is None:
+            _cached_converter, _cached_output_dim = util.get_preprocessing_params(path_globs)
+
+        if from_exam_converter:
+            model_preprocessors = [ExamToImagesSplitterModelPreprocessor(_cached_output_dim)]
+        else:
+            model_preprocessors = []
+
+        paths = inputs.get_tfrecord_paths(path_globs)
+        return inputs.input_fn_factory(
+            tfrecord_fpaths=paths,
+            feature_schema=_cached_converter.get_feature_schema(),
+            batch_size=1,
+            num_epochs=1,
+            model_preprocessors=model_preprocessors,
+        )
+
+    def get_feature_dicts(self, path_globs, from_exam_converter=True):
+        """
+        Args:
+            path_globs: List of filename globs, e.g.
+                ["/merantix_core/data/mx-healthcare-derived/preprocessed/diranuk_local_224x192/all/*TRAIN*.tfrecord.gz"]
+
+                Paths can be local or GCS, the function will automatically care about downloading them if necessary.
+            from_exam_converter: Whether the model uses data from the exam converter or not
+
+        Returns: Generator yielding one feature_dict (= one sample) at a time
+        """
+
+        feature_batch_tensor = self._get_input_fn(path_globs, from_exam_converter)()
+
+        with tf.Session() as sess:
+            while True:
+                try:
+                    feature_dict_batch_np = sess.run(feature_batch_tensor)
+
+                    batch_size = list(feature_dict_batch_np.values())[0].shape[0]
+                    for sample_nr in range(batch_size):
+                        feature_dict_np = {k: v[sample_nr] for k, v in iteritems(feature_dict_batch_np)}
+                        yield feature_dict_np
+
+                except tf.errors.OutOfRangeError:
+                    break
+
     def feed(self):
         """
         Returns:
           images: 4D tensor [batch_size, image_width, image_height, image_depth]
         """
         with tf.name_scope(self.name):
-            schema = {
-                ec.FEATKEY_NR_IMAGES: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-                ec.FEATKEY_IMAGE: tf.io.FixedLenFeature(dtype=tf.string, shape=[]),
-                ec.FEATKEY_IMAGE_HEIGHT: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-                ec.FEATKEY_IMAGE_WIDTH: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-                # NOTE: For some reason, "allow_missing" has to be set to True, otherwise there's an exception
-                #       "allow_missing must be set to True". This has no relevance for us, our values are never missing.
-                ec.FEATKEY_ORIGINAL_HEIGHT: tf.io.FixedLenSequenceFeature(dtype=tf.int64, shape=[], allow_missing=True),
-                ec.FEATKEY_ORIGINAL_WIDTH: tf.io.FixedLenSequenceFeature(dtype=tf.int64, shape=[], allow_missing=True),
-                ec.LABELKEY_GT_ROIS_WITH_FINDING_CODES: tf.io.FixedLenSequenceFeature(
-                    dtype=tf.int64, shape=[100, 5], allow_missing=True
-                ),
-                ec.LABELKEY_GT_ANNOTATION_CONFIDENCES: tf.io.FixedLenSequenceFeature(
-                    dtype=tf.int64, shape=[100], allow_missing=True
-                ),
-                ec.LABELKEY_GT_BIOPSY_PROVEN: tf.io.FixedLenSequenceFeature(
-                    dtype=np.int64, shape=[100], allow_missing=True
-                ),
-                ec.LABELKEY_GT_BIRADS_SCORE: tf.io.FixedLenSequenceFeature(
-                    dtype=np.int64, shape=[100], allow_missing=True
-                ),
-                ec.FEATKEY_ANNOTATION_STATUS: tf.io.FixedLenFeature(dtype=tf.string, shape=[]),
-                ec.LABELKEY_WAS_REFERRED: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-                ec.LABELKEY_WAS_REFERRED_IN_FOLLOWUP: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-                ec.LABELKEY_BIOPSY_SCORE: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-                ec.LABELKEY_BIOPSY_SCORE_OF_FOLLOWUP: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-                ec.FEATKEY_STUDY_INSTANCE_UID: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
-                ec.LABELKEY_ANNOTATION_ID: tf.io.FixedLenFeature(shape=[], dtype=tf.int64),
-                ec.LABELKEY_ANNOTATOR_MAIL: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
-                ec.FEATKEY_SOP_INSTANCE_UID: tf.io.FixedLenSequenceFeature(shape=[], dtype=tf.string,
-                                                                           allow_missing=True),
-                ec.FEATKEY_PATIENT_ID: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
-                ec.FEATKEY_MANUFACTURER: tf.io.FixedLenFeature(shape=[], dtype=tf.string),
-                ec.FEATKEY_LATERALITY: tf.io.FixedLenSequenceFeature(shape=[], dtype=tf.string, allow_missing=True),
-                ec.FEATKEY_VIEW: tf.io.FixedLenSequenceFeature(shape=[], dtype=tf.string, allow_missing=True),
-                ec.LABELKEY_DENSITY: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-                ec.LABELKEY_INTERVAL_TYPE: tf.io.FixedLenFeature(dtype=tf.int64, shape=[]),
-            }
-            tfrecord_paths = self.tfrecords_file
+            feature_dicts = self.get_feature_dicts([self.tfrecords_file])
+            images = []
+            for dict in feature_dicts:
+                image = tf.convert_to_tensor(dict[ec.FEATKEY_IMAGE])
+                image = self.convert2float(image)
+                images.append(image)
 
-            mx_logging.info("Constructing train input fn for [{}, ...]".format(tfrecord_paths[0]))
-
-            input_fn = inputs.input_fn_factory(
-                tfrecord_paths,
-                schema,
-                self.batch_size,
-                model_preprocessors=[ExamToImagesSplitterModelPreprocessor(self.output_dim)],
-                num_epochs=None,
-                num_parallel_reads=mp.cpu_count(),
-                num_parallel_calls=mp.cpu_count(),
+            # images = tf.stack(images)
+            # images = self._preprocess(images)
+            images = tf.train.shuffle_batch(
+                [image], batch_size=self.batch_size, num_threads=self.num_threads,
+                capacity=self.min_queue_examples + 3 * self.batch_size,
+                min_after_dequeue=self.min_queue_examples,
+                # allow_smaller_final_batch=True
             )
-
-            features, labels = input_fn()
-            images = features[ec.FEATKEY_IMAGE]
+            tf.summary.image('input', images)
 
         return images
 
     def _preprocess(self, image):
-        image = tf.image.resize_images(image, size=(self.image_width, self.image_height))
-        image = utils.convert2float(image)
-        image.set_shape([self.image_width, self.image_height, 3])
+        # image = tf.image.resize_images(image, size=(self.image_width, self.image_height))
+        image = self.convert2float(image)
+
         return image
 
 

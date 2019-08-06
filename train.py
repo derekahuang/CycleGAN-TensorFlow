@@ -32,9 +32,9 @@ tf.flags.DEFINE_integer('ngf', 64,
 #                        'X tfrecords file for training, default: data/tfrecords/apple.tfrecords')
 # tf.flags.DEFINE_string('Y', 'gs://mx-healthcare-derived/preprocessed/experimental/derek/IV_hologic/all/*.tfrecord.gz',
 #                        'Y tfrecords file for training, default: data/tfrecords/orange.tfrecords')
-tf.flags.DEFINE_string('X', 'data/tfrecords/apple.tfrecords',
+tf.flags.DEFINE_string('X', '/merantix_core/data/mx-healthcare-derived/preprocessed/diranuk_histogram/annotated/DIRANUK-TEST-00000-of-00666.tfrecord.gz',
                        'X tfrecords file for training, default: data/tfrecords/apple.tfrecords')
-tf.flags.DEFINE_string('Y', 'data/tfrecords/orange.tfrecords',
+tf.flags.DEFINE_string('Y', '/merantix_core/data/mx-healthcare-derived/preprocessed/diranuk_histogram/annotated/DIRANUK-TEST-00001-of-00666.tfrecord.gz',
                        'Y tfrecords file for training, default: data/tfrecords/orange.tfrecords')
 tf.flags.DEFINE_string('load_model', None,
                         'folder of saved model that you wish to continue training (e.g. 20170602-1936), default: None')
