@@ -1,0 +1,5 @@
+common.deployment.deploy_to_gce:
+    # Type: str
+    execution_mode: gce
+
+
